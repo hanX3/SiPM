@@ -4,14 +4,21 @@
 //
 Sort::Sort(const std::string &filename_in, const std::string &filename_out)
 {
-  benchmark = new TBenchmark;
+  benchmark.reset(new TBenchmark);
 
-  file_in = TFile::Open(filename_in.c_str());
-  if(file_in->IsZombie()){
-    std::cout << "cannot open " << filename_in << std::endl;
-  }
+  if(QDC_LONG_START < 0 || QDC_LONG_START >= QDC_LONG_STOP || QDC_SHORT_START < 0 || QDC_SHORT_START >= QDC_SHORT_STOP ||
+     QDC_LONG_STOP > MAX_SAMPLES || QDC_SHORT_STOP > MAX_SAMPLES)
+    throw std::runtime_error("invalid integration gates");
+  GetCaliPar(par);
+  GetTSOffset(ts_offset);
 
-  file_out = TFile::Open(filename_out.c_str(), "recreate");
+  file_in.reset(TFile::Open(filename_in.c_str()));
+  if(!file_in || file_in->IsZombie())
+    throw std::runtime_error("cannot open " + filename_in);
+
+  file_out.reset(TFile::Open(filename_out.c_str(), "CREATE"));
+  if(!file_out || file_out->IsZombie())
+    throw std::runtime_error("cannot create " + filename_out + " (already exists?)");
   tr_out = new TTree("tr", "DT5730_DPP_PHA");
 
   tr_out->Branch("board", &data_raw.board, "board/S");
@@ -37,9 +44,6 @@ Sort::Sort(const std::string &filename_in, const std::string &filename_out)
   memset(&data_ana, 0, sizeof(data_ana));
   
   //
-  memset(par, 0, sizeof(par)); 
-  GetCaliPar(par);
-  GetTSOffset(ts_offset);
 
 #ifdef DEBUG_SORT
   for(int i=0;i<MAX_CHANNELS;i++){
@@ -52,8 +56,7 @@ Sort::Sort(const std::string &filename_in, const std::string &filename_out)
 //
 Sort::~Sort()
 {
-  file_in->Close();
-  file_out->Close();
+  // File and benchmark ownership is managed by unique_ptr.
 }
 
 //
@@ -66,11 +69,11 @@ void Sort::Process()
   UShort_t energy;
   Long64_t timestamp;
 
-  Long64_t nentries[MAX_CHANNELS];
-  TTree *tr[MAX_CHANNELS];
+  Long64_t nentries[MAX_CHANNELS] = {};
+  TTree *tr[MAX_CHANNELS] = {};
 
   for(int i=0;i<MAX_CHANNELS;i++){
-    tr[i] = (TTree*)file_in->Get(TString::Format("tr_ch%02d",i).Data());
+    tr[i] = dynamic_cast<TTree*>(file_in->Get(TString::Format("tr_ch%02d",i).Data()));
     if(!tr[i]){
 #ifdef DEBUG_SORT
       std::cout << "channel " << i << " empty tree" << std::endl;
@@ -82,44 +85,50 @@ void Sort::Process()
     total_entry += tr[i]->GetEntries();
     nentries[i] = tr[i]->GetEntries();
 
-    tr[i]->SetBranchAddress("channel", &channel);
-    tr[i]->SetBranchAddress("energy_ch", &energy);
-    tr[i]->SetBranchAddress("timestamp", &timestamp);
-    tr[i]->SetBranchAddress("size", &size);
-    tr[i]->SetBranchAddress("data", data);
-    tr[i]->SetBranchAddress("dt", dt);
+    if(tr[i]->SetBranchAddress("board", &data_raw.board) < 0 ||
+       tr[i]->SetBranchAddress("channel", &channel) < 0 ||
+       tr[i]->SetBranchAddress("energy_ch", &energy) < 0 ||
+       tr[i]->SetBranchAddress("timestamp", &timestamp) < 0 ||
+       tr[i]->SetBranchAddress("size", &size) < 0 ||
+       tr[i]->SetBranchAddress("data", data) < 0 ||
+       tr[i]->SetBranchAddress("dt", dt) < 0)
+      throw std::runtime_error("missing or incompatible input branch");
   }
 
 #ifdef DEBUG_SORT
   std::cout << "total_entry " << total_entry << std::endl;
 #endif
 
-  Long64_t *ts;
-  ts = (Long64_t*)malloc(total_entry*sizeof(Long64_t)); 
-  Int_t *ts_ch;
-  ts_ch = (Int_t*)malloc(total_entry*sizeof(Int_t));
+  if(total_entry == 0) throw std::runtime_error("input contains no events");
+  std::vector<Long64_t> ts(total_entry);
+  std::vector<Long64_t> ts_ch(total_entry);
   
   total_entry = 0;
   for(int i=0;i<MAX_CHANNELS;i++){
     if(!tr[i]) continue;
     for(Long64_t j=0;j<tr[i]->GetEntries();j++){
-      tr[i]->GetEntry(j);
-      // may add own cfd here, to do
-      // ts[total_entry] = timestamp;
-      ts[total_entry] = timestamp+ts_offset[i];
+      // Read the length separately, before ROOT writes into the fixed arrays.
+      if(tr[i]->GetBranch("size")->GetEntry(j) <= 0 ||
+         size > MAX_SAMPLES || size < BASELINE_SAMPLE ||
+         size < static_cast<UInt_t>(QDC_LONG_STOP) || size < static_cast<UInt_t>(QDC_SHORT_STOP))
+        throw std::runtime_error("waveform length incompatible with buffer or integration gates");
+      if(tr[i]->GetBranch("timestamp")->GetEntry(j) <= 0)
+        throw std::runtime_error("cannot read timestamp");
+      ts[total_entry] = sipm::shift_timestamp(timestamp, ts_offset[i]);
       total_entry++;
     }
   }
 
   std::cout << "start sort ..." << std::endl;
-  TMath::Sort((Int_t)total_entry, (Long64_t*)ts, (Int_t*)ts_ch, kFALSE);
+  TMath::Sort(total_entry, ts.data(), ts_ch.data(), kFALSE);
 #ifdef DEBUG_SORT
   for(int i=0;i<10;i++){
     std::cout << "ts " << ts[i] << " ts_ch " << ts_ch[i] << std::endl;
   }
 #endif
 
-  free(ts);
+  ts.clear();
+  ts.shrink_to_fit();
   
   Long64_t min_tag[MAX_CHANNELS], max_tag[MAX_CHANNELS];
   memset(min_tag, 0, sizeof(min_tag));
@@ -143,16 +152,17 @@ void Sort::Process()
         break;
       }
     }
-    tr[tr_ch]->GetEntry(tr_entry);
+    if(tr[tr_ch]->GetEntry(tr_entry) <= 0 || channel != tr_ch)
+      throw std::runtime_error("unreadable event or channel/tree mismatch");
     data_raw.channel = channel;
-    data_raw.energy = par[channel][0]+par[channel][1]*(Double_t)energy+par[channel][2]*(Double_t)(energy*energy);
-    data_raw.timestamp = timestamp+ts_offset[tr_ch];
+    data_raw.energy = par[channel][0]+par[channel][1]*(Double_t)energy+par[channel][2]*(Double_t)energy*(Double_t)energy;
+    data_raw.timestamp = sipm::shift_timestamp(timestamp, ts_offset[tr_ch]);
 
     //ana
     GetBaseline();
     GetAmplitudeMax();
 
-    for(int k=0;k<size;k++){
+    for(UInt_t k=0;k<size;k++){
       v_data.push_back((Double_t)data[k]-data_ana.baseline);
       v_dt.push_back(k);
     }
@@ -185,7 +195,7 @@ void Sort::Process()
     v_data.clear();
     v_dt.clear();
   }
-  free(ts_ch);
+
 
 #ifdef DEBUG_SORT
   std::cout << "vec_d size " << vec_d.size() << std::endl;
@@ -224,7 +234,7 @@ void Sort::GetAmplitudeMax()
 void Sort::GetEnergyQDC()
 {
   data_ana.energy_qdc = 0.;
-  for(int i=0;i<size;i++){
+  for(UInt_t i=0;i<size;i++){
     data_ana.energy_qdc += v_data[i];
   }
 }
@@ -254,46 +264,17 @@ void Sort::GetQDCShort()
 //
 void GetCaliPar(Double_t p[MAX_CHANNELS][3])
 {
-  std::ifstream f;
-  f.open(TString::Format("%s",LABR3_CALI_DATA).Data());
-  if(!f){
-    std::cout << "can not open " << LABR3_CALI_DATA << std::endl;
-    return;
-  }
-
-  Int_t ch;
-  Double_t par0, par1, par2;
-  Double_t chi2;
-
-  while(true){
-    f >> ch >> par0 >> par1 >> par2 >> chi2;
-    if(!f.good()) break;
-
-    p[ch][0] = par0;
-    p[ch][1] = par1;
-    p[ch][2] = par2;
-  }
-  f.close();
+  const auto rows = sipm::read_parameters(LABR3_CALI_DATA, MAX_CHANNELS, 4);
+  for(int channel = 0; channel < MAX_CHANNELS; ++channel)
+    for(int coefficient = 0; coefficient < 3; ++coefficient)
+      p[channel][coefficient] = rows[channel * 4 + coefficient];
 }
 
-//
 void GetTSOffset(Double_t p[MAX_CHANNELS])
 {
-  std::ifstream f;
-  f.open(TString::Format("%s",LABR3_TS_OFFSET_DATA).Data());
-  if(!f){
-    std::cout << "can not open " << LABR3_TS_OFFSET_DATA << std::endl;
-    return;
+  const auto rows = sipm::read_parameters(LABR3_TS_OFFSET_DATA, MAX_CHANNELS, 1);
+  for(int channel = 0; channel < MAX_CHANNELS; ++channel) {
+    sipm::shift_timestamp(0, rows[channel]);
+    p[channel] = rows[channel];
   }
-
-  Int_t ch;
-  Double_t offset;
-
-  while(true){
-    f >> ch >> offset;
-    if(!f.good()) break;
-
-    p[ch] = offset;
-  }
-  f.close();
 }

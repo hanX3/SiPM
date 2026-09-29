@@ -11,6 +11,7 @@
 #include <TROOT.h>
 #include <TChain.h>
 #include <TFile.h>
+#include <TSystem.h>
 
 // Header file for the classes stored in the TTree if any.
 
@@ -88,11 +89,13 @@ pid::pid(TTree *tree) : fChain(0)
 // if parameter tree is not specified (or zero), connect the file
 // used to generate this class and read the Tree.
    if (tree == 0) {
-      TFile *f = (TFile*)gROOT->GetListOfFiles()->FindObject("../../../data/XIA/rootfile/data_all.root");
-      // TFile *f = (TFile*)gROOT->GetListOfFiles()->FindObject("../../../data/XIA/rootfile/data_C1_0003_wave.root");
-      if (!f || !f->IsOpen()) {
-         f = new TFile("../../../data/XIA/rootfile/data_all.root");
-         // f = new TFile("../../../data/XIA/rootfile/data_C1_0003_wave.root");
+      const TString filename = TString::Format("%s/../../data/XIA/rootfile/data_all.root",
+                                                gSystem->DirName(__FILE__));
+      TFile *f = (TFile*)gROOT->GetListOfFiles()->FindObject(filename);
+      if(!f || !f->IsOpen()) f = TFile::Open(filename);
+      if(!f || f->IsZombie()) {
+         Error("XIA", "cannot open %s", filename.Data());
+         return;
       }
       f->GetObject("tree",tree);
 

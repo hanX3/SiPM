@@ -2,6 +2,8 @@
 #define SORT_H_
 
 #include "set.h"
+#include "../../common/InputChecks.h"
+#include <memory>
 #include <vector>
 #include <fstream>
 #include <iostream>
@@ -69,9 +71,9 @@ private:
   std::vector<Double_t> v_dt;
 
 private:
-  TBenchmark *benchmark;
-  TFile *file_in;
-  TFile *file_out;
+  std::unique_ptr<TBenchmark> benchmark;
+  std::unique_ptr<TFile> file_in;
+  std::unique_ptr<TFile> file_out;
   TTree *tr_out;
 };
 
