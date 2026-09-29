@@ -8,6 +8,25 @@
 #include "TString.h"
 #include "TSystem.h"
 
+#include <cerrno>
+#include <cstdlib>
+#include <limits>
+#include <stdexcept>
+
+namespace sipm {
+
+inline int nonnegative_int(const char *text)
+{
+  char *end = nullptr;
+  errno = 0;
+  const long value = std::strtol(text, &end, 10);
+  if(errno || end == text || *end || value < 0 || value > std::numeric_limits<int>::max())
+    throw std::runtime_error(std::string("invalid nonnegative integer: ") + text);
+  return static_cast<int>(value);
+}
+
+} // namespace sipm
+
 int main(int argc, char const *argv[])
 try {
   if(argc != 6){

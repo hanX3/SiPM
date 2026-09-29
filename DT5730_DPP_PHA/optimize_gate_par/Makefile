@@ -1,6 +1,6 @@
 out = sort
 
-sourcefile = main.cpp Sort.h Sort.cpp set.h ../../common/InputChecks.h
+sourcefile = main.cpp Sort.h Sort.cpp set.h
 
 ROOTCFLAGS  = $(shell root-config --cflags)
 ROOTLIBS    = $(shell root-config --libs) -lSpectrum

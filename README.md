@@ -10,9 +10,7 @@
 | `DT5730_DPP_PHA/` | PHA 数据转换、排序、波形分析、积分门扫描 |
 | `DT5720_DPP_PSD/` | PSD 数据转换、排序和波形分析 |
 | `XIA/` | 已解码 XIA ROOT 数据的波形查看、平均波形与粒子甄别 |
-| `common/` | 输入、参数和时间戳检查 |
-| `config/` | 刻度及时间修正参数的示例 |
-| `tests/` | 使用合成事件的回归验证 |
+| `PLAN.md` | 后续数据核对、波形分析和参数优化计划 |
 
 主要流程：
 
@@ -68,23 +66,32 @@ PSD 的对应默认数据目录为 `data/DT5720_DPP_PSD/DAQ/`，也支持显式�
 ```text
 # SiPM_cali.dat: channel p0 p1 p2 chi2
 0 0 1 0 0
+1 0 1 0 0
+2 0 1 0 0
+3 0 1 0 0
+4 0 1 0 0
+5 0 1 0 0
+6 0 1 0 0
+7 0 1 0 0
+```
 
+```text
 # SiPM_ts_offset.dat: channel offset_ps
 0 0
+1 0
+2 0
+3 0
+4 0
+5 0
+6 0
+7 0
 ```
 
 能量计算为 `p0 + p1 * energy_ch + p2 * energy_ch²`；时间修正为
 `timestamp + offset_ps`，修正量须为整数皮秒。
 缺失文件、缺失通道、重复通道或不完整参数行会报错。
 
-`config/*.example.dat` 提供完整格式示例。仅用于检查流程时，可在 `sort/` 中复制：
-
-```bash
-cp ../../config/SiPM_cali.example.dat SiPM_cali.dat
-cp ../../config/SiPM_ts_offset.example.dat SiPM_ts_offset.dat
-```
-
-示例采用恒等能量变换和零时间修正，**不代表实际实验刻度，也不会把 ADC 道址转换为 keV**。
+以上示例采用恒等能量变换和零时间修正，**不代表实际实验刻度，也不会把 ADC 道址转换为 keV**。
 物理分析必须使用该批实验的参数。
 
 ### 波形与 PID
@@ -122,14 +129,8 @@ get_fom_single(3, 11)
 `XIA/analysis/ana.C` 和 `XIA/pid/pid.C` 在 ROOT 中加载后可创建 `ana`、`pid` 对象。
 默认数据路径由各自头文件位置定位到项目的 `data/XIA/rootfile/`，也可向构造函数传入已有 `TTree`。
 
-## 验证
+## 分析前核对
 
-需要 Python 3 和当前 ROOT 对应的 PyROOT：
-
-```bash
-python3 tests/regression.py
-```
-
-验证在临时目录编译五个程序并生成合成数据，检查能量和时间戳数值、板卡号、时间排序、
-波形积分、参数扫描，以及截断事件、越界长度、缺失参数、空 PID 分布和已有输出文件的处理。
-不会读取或覆盖实验数据。
+先选一个小 run，确认原始数据和 ROOT 中的事件数、板卡号、通道、时间戳及波形一致，
+再检查基线、峰值、积分和刻度能量。所有检查使用单独的输出目录。
+后续工作及验收条件见 [PLAN.md](PLAN.md)。

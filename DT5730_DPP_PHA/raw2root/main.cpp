@@ -9,8 +9,33 @@
 #include "TTree.h"
 
 #include "set.h"
-#include "../../common/InputChecks.h"
+#include <cerrno>
+#include <limits>
+#include <stdexcept>
 #include <memory>
+
+namespace sipm {
+
+inline int nonnegative_int(const char *text)
+{
+  char *end = nullptr;
+  errno = 0;
+  const long value = std::strtol(text, &end, 10);
+  if(errno || end == text || *end || value < 0 || value > std::numeric_limits<int>::max())
+    throw std::runtime_error(std::string("invalid nonnegative integer: ") + text);
+  return static_cast<int>(value);
+}
+
+// EOF is valid only before the first field of a new event.
+inline bool read_exact(FILE *file, void *destination, size_t bytes, bool allow_eof = false)
+{
+  const size_t count = std::fread(destination, 1, bytes, file);
+  if(count == bytes) return true;
+  if(allow_eof && count == 0 && std::feof(file) && !std::ferror(file)) return false;
+  throw std::runtime_error("truncated event or read error in binary input");
+}
+
+} // namespace sipm
 
 //
 int main(int argc, char *argv[])

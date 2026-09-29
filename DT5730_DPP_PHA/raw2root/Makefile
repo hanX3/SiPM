@@ -1,5 +1,5 @@
 OBJ = raw2root
-sourcefile = main.cpp set.h ../../common/InputChecks.h
+sourcefile = main.cpp set.h
 
 ROOTCFLAGS  = $(shell root-config --cflags)
 ROOTLIBS    = $(shell root-config --libs)

@@ -2,7 +2,6 @@
 #define SORT_H_
 
 #include "set.h"
-#include "../../common/InputChecks.h"
 #include <memory>
 #include <vector>
 #include <fstream>
